@@ -27,6 +27,8 @@ def hold(action, frames):
         last = env.step(action)[0]
 
 hold(0x00, 30)                 # warm up / let init run
+hold(0x08, 4)                  # Start -> leave the title screen
+hold(0x00, 10)
 for tok in seq:
     hold(BTN[tok], 4)          # press
     hold(0x00, 8)              # release (edge detect needs the release)

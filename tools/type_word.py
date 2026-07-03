@@ -25,6 +25,8 @@ def wait(n=20):
         last[0] = env.step(0)[0]
 
 wait(30)
+tap(START)                                # leave the title screen
+wait(10)
 for i, ch in enumerate(word):
     for _ in range(ord(ch) - ord('A')):   # cycle A -> target letter
         tap(UP)

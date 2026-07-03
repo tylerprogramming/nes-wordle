@@ -115,6 +115,7 @@ kt_a:          .res 1     ; keyboard geometry scratch
 kt_b:          .res 1
 kt_c:          .res 1
 kt_d:          .res 1
+state:         .res 1     ; 0 = title screen, 1 = playing
 
 ; ---- iNES header ----
 .segment "HEADER"
@@ -177,10 +178,8 @@ load_palette:
     cpx #32
     bne load_palette
 
-    ; ---- draw the title, board and keyboard (rendering still off) ----
-    jsr draw_title
-    jsr draw_board
-    jsr draw_keyboard
+    ; ---- draw the title (home) screen (rendering still off) ----
+    jsr draw_title_screen
 
     ; ---- point PPU address back to top-left so the screen isn't scrolled ----
     lda #%10000000        ; NMI on, BG pattern table 0, nametable 0
@@ -236,12 +235,21 @@ handle_input:
     lda pad
     sta pad_prev
 
+    lda state             ; title screen: any press starts a new game
+    bne @playing
+    lda pressed
+    beq @title_rts
+    jsr new_game
+@title_rts:
+    rts
+@playing:
+
     lda game_over         ; when the game is over, wait for a restart press
     beq @live
     lda pressed
     and #(BTN_START | BTN_A | BTN_RIGHT)
     beq @over_rts
-    jsr restart_game
+    jsr new_game
 @over_rts:
     rts
 @live:
@@ -771,61 +779,65 @@ color_keyboard:
     rts
 
 ; ------------------------------------------------------------
-; restart_game - reset state and rebuild the board for a new round.
-; Runs with rendering off (like init) so it can freely rewrite VRAM.
+; clear_nametable - fill nametable 0 + its attributes with blank tiles.
+; Must run with rendering off.
 ; ------------------------------------------------------------
-restart_game:
+clear_nametable:
+    bit $2002
+    lda #$20
+    sta $2006
+    lda #$00
+    sta $2006
+    ldx #0
+    ldy #4
+    lda #$00              ; blank tile
+@fill:
+    sta $2007
+    inx
+    bne @fill
+    dey
+    bne @fill             ; 4 * 256 = 1024 bytes ($2000-$23FF)
+    rts
+
+; ------------------------------------------------------------
+; new_game - clear the screen and start a fresh round (from the title
+; screen or after game over). Runs with rendering off, then re-enables.
+; ------------------------------------------------------------
+new_game:
     lda #0
     sta $2000             ; NMI off
     sta $2001             ; rendering off
 
-    sta g_col             ; reset game state (A is still 0 here)
+    sta g_col             ; reset all game state
     sta g_row
     sta g_letter
     sta game_over
     sta seeded            ; next press chooses a fresh answer
     sta clear_pending
     sta submit_flush
+    sta commit_pending
     sta msg_id
+    sta msg_dirty
+    sta kbd_dirty
     ldx #4
 @clr_letters:
     sta row_letters, x
     dex
     bpl @clr_letters
-
-    ldx #25               ; clear the keyboard letter states
+    ldx #25
     lda #0
 @clr_keys:
     sta key_state, x
     dex
     bpl @clr_keys
 
-    jsr draw_board        ; redraw all cells as empty boxes
-    jsr draw_keyboard     ; redraw the keyboard letters (now uncolored)
+    jsr clear_nametable   ; wipe the whole screen (title art or old board)
+    jsr draw_title        ; small "WORDLE" header
+    jsr draw_board
+    jsr draw_keyboard
 
-    bit $2002             ; clear the attribute table -> palette 0 everywhere
-    lda #$23
-    sta $2006
-    lda #$c0
-    sta $2006
-    ldx #64
-    lda #0
-@clr_attr:
-    sta $2007
-    dex
-    bne @clr_attr
-
-    bit $2002             ; clear the message line (12 spaces)
-    lda #$23
-    sta $2006
-    lda #$8a
-    sta $2006
-    ldx #12
-    lda #$20
-@clr_msg:
-    sta $2007
-    dex
-    bne @clr_msg
+    lda #1                ; now playing
+    sta state
 
     lda #%10000000        ; reset scroll, re-enable NMI + rendering
     sta $2000
@@ -838,6 +850,86 @@ restart_game:
     sta $2005
     lda #%00001110
     sta $2001
+    rts
+
+; ------------------------------------------------------------
+; draw_title_screen - the home screen: big "WORDLE" + a start prompt.
+; Runs with rendering off.
+; ------------------------------------------------------------
+draw_title_screen:
+    jsr clear_nametable
+
+    ; big "WORDLE" across tile row 10 (letters at cols 10,12,...,20)
+    ldx #0
+@big_loop:
+    lda title_big_cols, x
+    sta kt_a              ; tile column
+    ; top row of the big letter at $2000 + 10*32 + col = $2140 + col
+    bit $2002
+    lda #$21
+    sta $2006
+    lda #$40
+    clc
+    adc kt_a
+    sta $2006
+    lda title_big_let, x  ; letter index -> base tile
+    asl a
+    asl a
+    clc
+    adc #BIG_BASE
+    sta kt_b              ; TL tile
+    sta $2007             ; TL
+    clc
+    adc #1
+    sta $2007             ; TR
+    ; bottom row (+32 tiles) at $2160 + col
+    bit $2002
+    lda #$21
+    sta $2006
+    lda #$60
+    clc
+    adc kt_a
+    sta $2006
+    lda kt_b
+    clc
+    adc #2
+    sta $2007             ; BL
+    clc
+    adc #1
+    sta $2007             ; BR
+    inx
+    cpx #6
+    bne @big_loop
+
+    ; "PUSH START" centered on tile row 18 ($2000 + 18*32 + 11 = $224B)
+    bit $2002
+    lda #$22
+    sta $2006
+    lda #$4B
+    sta $2006
+    ldx #0
+@p1:
+    lda prompt1, x
+    beq @p1done
+    sta $2007
+    inx
+    jmp @p1
+@p1done:
+
+    ; "OR PRESS RIGHT" on tile row 20 ($2000 + 20*32 + 9 = $2289)
+    bit $2002
+    lda #$22
+    sta $2006
+    lda #$89
+    sta $2006
+    ldx #0
+@p2:
+    lda prompt2, x
+    beq @p2done
+    sta $2007
+    inx
+    jmp @p2
+@p2done:
     rts
 
 ; ------------------------------------------------------------
@@ -1086,7 +1178,9 @@ nmi:
 @blink_done:
 
     ; redraw the active cell, blinking between its letter and an empty box.
-    ; Skipped once the game is over so a finished row isn't disturbed.
+    ; Skipped on the title screen and once the game is over.
+    lda state
+    beq @no_active
     lda game_over
     bne @no_active
     lda g_col
@@ -1237,6 +1331,17 @@ palette:
 
 title_text:
     .byte "WORDLE", $00
+
+; Title-screen big "WORDLE": letter indices and their tile columns
+title_big_let:
+    .byte 22, 14, 17, 3, 11, 4     ; W O R D L E
+title_big_cols:
+    .byte 10, 12, 14, 16, 18, 20
+
+prompt1:
+    .byte "PUSH START", $00
+prompt2:
+    .byte "OR PRESS RIGHT", $00
 
 ; key rank (0 none,1 gray,2 yellow,3 green) -> palette number
 state_pal:

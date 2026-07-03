@@ -17,6 +17,8 @@ def wait(n):
     for _ in range(n): last[0] = env.step(0)[0]
 
 wait(40)
+tap(START)                       # leave the title screen
+wait(10)
 tap(LEFT)                              # seed
 wait(5)
 answer = [int(env.ram[ANSWER_ADDR + i]) for i in range(5)]

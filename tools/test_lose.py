@@ -30,6 +30,8 @@ def type_word(word, submit=True):
     wait(6)
 
 wait(40)
+tap(START)                       # leave the title screen
+wait(10)
 tap(LEFT)                       # seed the answer
 wait(5)
 answer = "".join(chr(ord('A') + int(env.ram[ANSWER_ADDR + i])) for i in range(5))
